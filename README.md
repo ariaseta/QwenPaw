@@ -240,6 +240,70 @@ Also available on Alibaba Cloud Container Registry (ACR) for users in China: `ag
 
 Then open **http://127.0.0.1:8088/** for the Console. Config, memory, and skills are stored in the `qwenpaw-data` volume; model provider settings and API keys are in the `qwenpaw-secrets` volume; backup archives are stored in the `qwenpaw-backups` volume. To pass API keys (e.g. `DASHSCOPE_API_KEY`), add `-e VAR=value` or `--env-file .env` to `docker run`.
 
+#### Docker Environment Variables
+
+All environment variables can be passed via `-e VAR=value` or `--env-file .env`.
+
+**Networking & paths:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QWENPAW_PORT` | `8088` | Port the app listens on inside the container. Must match the container-side of `-p`. |
+| `QWENPAW_WORKING_DIR` | `/app/working` | Working directory (config, memory, skills). Mount a volume here to persist data. |
+| `QWENPAW_SECRET_DIR` | `/app/working.secret` | Secrets directory (provider configs, API keys). Mount a volume here to persist secrets. |
+| `QWENPAW_BACKUP_DIR` | `/app/working.backups` | Backup archives directory. |
+
+**Authentication:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QWENPAW_AUTH_ENABLED` | `false` | Set to `true` to require login for the Console. |
+| `QWENPAW_AUTH_USERNAME` | _(none)_ | Auto-creates an admin account with this username on first start (requires `QWENPAW_AUTH_ENABLED=true`). |
+| `QWENPAW_AUTH_PASSWORD` | _(none)_ | Password for the auto-created admin account. |
+
+**Channels:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QWENPAW_DISABLED_CHANNELS` | `imessage` | Comma-separated list of channels to exclude (e.g. `imessage,dingtalk`). |
+| `QWENPAW_ENABLED_CHANNELS` | _(all)_ | Comma-separated whitelist of channels to include. Takes precedence over `QWENPAW_DISABLED_CHANNELS`. |
+
+**Logging & memory:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QWENPAW_LOG_LEVEL` | `info` | Log level: `debug` / `info` / `warning` / `error` / `critical`. |
+| `QWENPAW_MEMORY_COMPACT_THRESHOLD` | `100000` | Character count that triggers memory compaction. |
+| `QWENPAW_MEMORY_COMPACT_KEEP_RECENT` | `3` | Number of recent messages to keep after compaction. |
+| `QWENPAW_MEMORY_COMPACT_RATIO` | `0.7` | Compaction threshold ratio relative to context window size. |
+| `FTS_ENABLED` | `true` | Enable BM25 full-text search on memory. |
+| `MEMORY_STORE_BACKEND` | `auto` | Memory store backend: `auto` / `local` / `chroma` / `sqlite`. |
+
+**Security:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QWENPAW_TOOL_GUARD_ENABLED` | `true` | Enable tool guard (blocks dangerous shell commands). |
+| `QWENPAW_TOOL_GUARD_TOOLS` | _(all)_ | Comma-separated list of tools that require approval. |
+| `QWENPAW_TOOL_GUARD_DENIED_TOOLS` | _(none)_ | Comma-separated list of tools to always deny. |
+| `QWENPAW_TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS` | `600` | Seconds to wait for user approval before auto-denying. |
+| `QWENPAW_SKILL_SCAN_MODE` | `warn` | Skill security scan mode: `block` / `warn` / `off`. |
+
+Example with authentication and custom port:
+
+```bash
+docker run -p 127.0.0.1:3000:3000 \
+  -e QWENPAW_PORT=3000 \
+  -e QWENPAW_AUTH_ENABLED=true \
+  -e QWENPAW_AUTH_USERNAME=admin \
+  -e QWENPAW_AUTH_PASSWORD=yourpassword \
+  -e DASHSCOPE_API_KEY=sk-xxx \
+  -v qwenpaw-data:/app/working \
+  -v qwenpaw-secrets:/app/working.secret \
+  -v qwenpaw-backups:/app/working.backups \
+  agentscope/qwenpaw:latest
+```
+
 > **Connecting to Ollama or other services on the host machine**
 >
 > Inside a Docker container, `localhost` refers to the container itself, not your host machine. If you run Ollama (or other model services) on the host and want QwenPaw in Docker to reach them, use one of these approaches:

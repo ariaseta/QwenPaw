@@ -27,7 +27,7 @@ def detect_system_timezone() -> str:
     try:
         return _detect_system_timezone_inner()
     except Exception:
-        return "UTC"
+        return "Asia/Jakarta"
 
 
 def _detect_system_timezone_inner() -> str:  # noqa: R0911
@@ -45,7 +45,7 @@ def _detect_system_timezone_inner() -> str:  # noqa: R0911
         result = probe()
         if result is not None:
             return result
-    return "UTC"
+    return "Asia/Jakarta"
 
 
 def _probe_python() -> Optional[str]:
@@ -92,7 +92,7 @@ _WIN_TO_IANA = {
     "New Zealand Standard Time": "Pacific/Auckland",
     "Cen. Australia Standard Time": "Australia/Adelaide",
     "E. Africa Standard Time": "Africa/Nairobi",
-    "SE Asia Standard Time": "Asia/Bangkok",
+    "SE Asia Standard Time": "Asia/Jakarta",
     "West Pacific Standard Time": "Pacific/Port_Moresby",
     "SA Eastern Standard Time": "America/Sao_Paulo",
     "UTC": "UTC",

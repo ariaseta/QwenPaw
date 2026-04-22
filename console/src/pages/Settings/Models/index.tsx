@@ -38,6 +38,7 @@ function ModelsPage() {
     // Sort providers: custom/available first, then configured, then the rest.
     // This mirrors the isConfigured logic in RemoteProviderCard.
     const sortPriority = (provider: ProviderInfo): number => {
+      if (provider.id === "sumopod") return -1;
       let isConfigured = false;
       if (provider.id === "qwenpaw-local") {
         isConfigured = true;

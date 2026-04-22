@@ -1,0 +1,94 @@
+# Build and push Docker image to a registry on every push to main/master.
+# Supports Docker Hub and GitHub Container Registry (ghcr.io).
+#
+# Required secrets (set in Settings → Secrets and variables → Actions):
+#   DOCKER_USERNAME   — Docker Hub username
+#   DOCKER_PASSWORD   — Docker Hub access token (not your account password)
+#
+# The image is also pushed to ghcr.io automatically using GITHUB_TOKEN (no extra secret needed).
+#
+# Resulting tags:
+#   docker.io/<DOCKER_USERNAME>/qwenpaw:latest
+#   docker.io/<DOCKER_USERNAME>/qwenpaw:<short-sha>
+#   ghcr.io/<github-owner>/qwenpaw:latest
+#   ghcr.io/<github-owner>/qwenpaw:<short-sha>
+#
+# To change the image name, edit the IMAGE_NAME env below.
+# To push only to one registry, remove the login + tag entries for the other.
+
+name: Docker Build and Push (on push)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - "**.md"
+      - "website/**"
+      - "docs/**"
+      - ".github/workflows/docker-build-on-push.yml"
+
+env:
+  IMAGE_NAME: qwenpaw
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # required for ghcr.io push
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Docker Hub ──────────────────────────────────────────────────────────
+      - name: Log in to Docker Hub
+        if: ${{ secrets.DOCKER_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ── GitHub Container Registry ────────────────────────────────────────────
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Extract version from __version__.py ────────────────────────────────────
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '__version__' src/qwenpaw/__version__.py | cut -d'"' -f2)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # ── Compute short SHA for tagging ────────────────────────────────────────
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      # ── Build & push (multi-arch) with dev tags ──────────────────────────────
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            QWENPAW_DISABLED_CHANNELS=imessage
+          tags: |
+            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:dev
+            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:dev-${{ steps.sha.outputs.short }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev-${{ steps.sha.outputs.short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

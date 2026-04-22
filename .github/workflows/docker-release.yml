@@ -79,6 +79,8 @@ jobs:
         run: |
           TAGS="-t ${ACR_REGISTRY}/${IMAGE}:${VERSION} -t ${ACR_REGISTRY}/${IMAGE}:pre"
           TAGS="${TAGS} -t docker.io/${IMAGE}:${VERSION} -t docker.io/${IMAGE}:pre"
+          # Add v-prefixed version tag
+          TAGS="${TAGS} -t ${ACR_REGISTRY}/${IMAGE}:v${VERSION#v} -t docker.io/${IMAGE}:v${VERSION#v}"
           if [ "${IS_PRERELEASE}" != "true" ]; then
             TAGS="${TAGS} -t ${ACR_REGISTRY}/${IMAGE}:latest -t docker.io/${IMAGE}:latest"
           fi

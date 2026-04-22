@@ -1,0 +1,91 @@
+# GitLab CI — Build and push Docker image on every push to main/master.
+#
+# Supports two registries (enable/disable by configuring variables):
+#   1. GitLab Container Registry (built-in, no extra secrets needed)
+#   2. Docker Hub (requires CI/CD variables DOCKER_HUB_USERNAME + DOCKER_HUB_TOKEN)
+#
+# To configure in GitLab:
+#   Settings → CI/CD → Variables → Add:
+#     DOCKER_HUB_USERNAME   — your Docker Hub username
+#     DOCKER_HUB_TOKEN      — Docker Hub access token (masked)
+#
+# Resulting tags (GitLab registry):
+#   $CI_REGISTRY_IMAGE:latest
+#   $CI_REGISTRY_IMAGE:<short-sha>
+#
+# Resulting tags (Docker Hub, if DOCKER_HUB_USERNAME is set):
+#   docker.io/$DOCKER_HUB_USERNAME/qwenpaw:latest
+#   docker.io/$DOCKER_HUB_USERNAME/qwenpaw:<short-sha>
+#
+# Multi-arch (linux/amd64 + linux/arm64) requires a runner with Docker-in-Docker
+# and buildx available. If your runner is single-arch, remove --platform below.
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  IMAGE_NAME: qwenpaw
+  PLATFORMS: "linux/amd64,linux/arm64"
+  QWENPAW_DISABLED_CHANNELS: "imessage"
+
+# ── Stages ────────────────────────────────────────────────────────────────────
+stages:
+  - build
+
+# ── Anchor: shared DinD setup ──────────────────────────────────────────────────
+.docker-build: &docker-build
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  before_script:
+    - docker info
+    # Install buildx plugin for multi-arch
+    - mkdir -p ~/.docker/cli-plugins
+    - |
+      BUILDX_VERSION=$(wget -qO- https://api.github.com/repos/docker/buildx/releases/latest \
+        | grep '"tag_name"' | cut -d'"' -f4)
+      wget -qO ~/.docker/cli-plugins/docker-buildx \
+        "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
+      chmod +x ~/.docker/cli-plugins/docker-buildx
+    - docker buildx create --use --name multiarch-builder
+    - docker buildx inspect --bootstrap
+
+# ── Job: build and push ────────────────────────────────────────────────────────
+docker-build-push:
+  <<: *docker-build
+  stage: build
+  only:
+    refs:
+      - main
+      - master
+    changes:
+      - "**/*"
+      - "!**/*.md"
+      - "!website/**"
+      - "!docs/**"
+  script:
+    - SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
+    - VERSION=$(grep '__version__' src/qwenpaw/__version__.py | cut -d'"' -f2)
+
+    # ── GitLab Container Registry ──────────────────────────────────────────
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+
+    - TAGS="-t ${CI_REGISTRY_IMAGE}:dev -t ${CI_REGISTRY_IMAGE}:dev-${SHORT_SHA}"
+
+    # ── Docker Hub (optional) ──────────────────────────────────────────────
+    - |
+      if [ -n "$DOCKER_HUB_USERNAME" ] && [ -n "$DOCKER_HUB_TOKEN" ]; then
+        echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" docker.io --password-stdin
+        TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev"
+        TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+      fi
+
+    # ── Build & push ───────────────────────────────────────────────────────
+    - |
+      docker buildx build \
+        --platform "${PLATFORMS}" \
+        -f deploy/Dockerfile \
+        --build-arg QWENPAW_DISABLED_CHANNELS="${QWENPAW_DISABLED_CHANNELS}" \
+        ${TAGS} \
+        --push \
+        .
