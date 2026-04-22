@@ -17,6 +17,9 @@ WORKDIR /app/console
 # Increase Node.js heap size for large vite builds.
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
+# Console build uses git metadata in npm scripts.
+RUN apt-get update && apt-get install -y --no-install-recommends git
+
 # 1. Install deps first — cached unless package*.json changes.
 COPY console/package.json console/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
