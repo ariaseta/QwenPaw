@@ -47,7 +47,8 @@ stages:
       wget -qO ~/.docker/cli-plugins/docker-buildx \
         "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
       chmod +x ~/.docker/cli-plugins/docker-buildx
-    - docker buildx create --use --name multiarch-builder
+    - docker context create tls-env
+    - docker buildx create --use --name multiarch-builder --driver docker-container tls-env
     - docker buildx inspect --bootstrap
 
 # ── Job: build and push ────────────────────────────────────────────────────────
