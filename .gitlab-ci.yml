@@ -1,92 +1,133 @@
-# GitLab CI — Build and push Docker image on every push to main/master.
+# GitLab CI — Build and push Docker image.
 #
-# Supports two registries (enable/disable by configuring variables):
-#   1. GitLab Container Registry (built-in, no extra secrets needed)
-#   2. Docker Hub (requires CI/CD variables DOCKER_HUB_USERNAME + DOCKER_HUB_TOKEN)
+# Strategy (optimized for speed):
+#   • Branch pushes (main/master/dev): build linux/amd64 ONLY → fast (~3-6 min on warm cache)
+#   • Tag pushes (v*) or manual `release:multiarch`: multi-arch (amd64 + arm64)
+#   • BuildKit registry cache (`mode=max`) shared across runs → near-instant on
+#     unchanged layers (apt, npm ci, pip install, console build)
+#   • Buildx provided by Alpine pkg (no GitHub API download → no rate limit, no flake)
+#   • QEMU registered only when arm64 is actually required
 #
-# To configure in GitLab:
-#   Settings → CI/CD → Variables → Add:
-#     DOCKER_HUB_USERNAME   — your Docker Hub username
-#     DOCKER_HUB_TOKEN      — Docker Hub access token (masked)
+# CI/CD variables (Settings → CI/CD → Variables):
+#   DOCKER_HUB_USERNAME   (optional) — Docker Hub username
+#   DOCKER_HUB_TOKEN      (optional, masked) — Docker Hub access token
 #
-# Resulting tags (GitLab registry):
-#   $CI_REGISTRY_IMAGE:latest
-#   $CI_REGISTRY_IMAGE:<short-sha>
-#
-# Resulting tags (Docker Hub, if DOCKER_HUB_USERNAME is set):
-#   docker.io/$DOCKER_HUB_USERNAME/qwenpaw:latest
-#   docker.io/$DOCKER_HUB_USERNAME/qwenpaw:<short-sha>
-#
-# Multi-arch (linux/amd64 + linux/arm64) requires a runner with Docker-in-Docker
-# and buildx available. If your runner is single-arch, remove --platform below.
+# Tags produced:
+#   GitLab registry:
+#     $CI_REGISTRY_IMAGE:dev                 (branch builds)
+#     $CI_REGISTRY_IMAGE:dev-<short-sha>
+#     $CI_REGISTRY_IMAGE:<tag>               (tag builds)
+#     $CI_REGISTRY_IMAGE:latest              (tag builds)
+#   Docker Hub (if configured): same tags under docker.io/$DOCKER_HUB_USERNAME/qwenpaw
 
 variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
   IMAGE_NAME: qwenpaw
-  PLATFORMS: "linux/amd64,linux/arm64"
   QWENPAW_DISABLED_CHANNELS: "imessage"
+  CACHE_IMAGE: "$CI_REGISTRY_IMAGE/buildcache"
+  GIT_DEPTH: "20"
+  GIT_STRATEGY: fetch
+  GIT_SUBMODULE_STRATEGY: none
 
-# ── Stages ────────────────────────────────────────────────────────────────────
 stages:
   - build
+  - release
 
-# ── Anchor: shared DinD setup ──────────────────────────────────────────────────
-.docker-build: &docker-build
-  image: docker:27
+.docker-base:
+  image: docker:27-cli
   services:
     - name: docker:27-dind
       alias: docker
+      command: ["--mtu=1400"]
   before_script:
-    - docker info
-    # Install buildx plugin for multi-arch
-    - mkdir -p ~/.docker/cli-plugins
-    - |
-      BUILDX_VERSION=$(wget -qO- https://api.github.com/repos/docker/buildx/releases/latest \
-        | grep '"tag_name"' | cut -d'"' -f4)
-      wget -qO ~/.docker/cli-plugins/docker-buildx \
-        "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
-      chmod +x ~/.docker/cli-plugins/docker-buildx
-    - docker context create tls-env
-    - docker buildx create --use --name multiarch-builder --driver docker-container tls-env
-    - docker buildx inspect --bootstrap
-
-# ── Job: build and push ────────────────────────────────────────────────────────
-docker-build-push:
-  <<: *docker-build
-  stage: build
-  only:
-    refs:
-      - main
-      - master
-    changes:
-      - "**/*"
-      - "!**/*.md"
-      - "!website/**"
-      - "!docs/**"
-  script:
-    - SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
-    - VERSION=$(grep '__version__' src/qwenpaw/__version__.py | cut -d'"' -f2)
-
-    # ── GitLab Container Registry ──────────────────────────────────────────
+    - apk add --no-cache docker-cli-buildx
+    - docker version
+    - docker buildx version
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
-
-    - TAGS="-t ${CI_REGISTRY_IMAGE}:dev -t ${CI_REGISTRY_IMAGE}:dev-${SHORT_SHA}"
-
-    # ── Docker Hub (optional) ──────────────────────────────────────────────
     - |
       if [ -n "$DOCKER_HUB_USERNAME" ] && [ -n "$DOCKER_HUB_TOKEN" ]; then
         echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" docker.io --password-stdin
-        TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev"
-        TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
       fi
 
-    # ── Build & push ───────────────────────────────────────────────────────
+.tag-args: &tag-args |
+  SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
+  TAGS=""
+  if [ -n "$CI_COMMIT_TAG" ]; then
+    TAGS="-t ${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG} -t ${CI_REGISTRY_IMAGE}:latest"
+    if [ -n "$DOCKER_HUB_USERNAME" ]; then
+      TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:${CI_COMMIT_TAG}"
+      TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:latest"
+    fi
+  else
+    TAGS="-t ${CI_REGISTRY_IMAGE}:dev -t ${CI_REGISTRY_IMAGE}:dev-${SHORT_SHA}"
+    if [ -n "$DOCKER_HUB_USERNAME" ]; then
+      TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev"
+      TAGS="${TAGS} -t docker.io/${DOCKER_HUB_USERNAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+    fi
+  fi
+  echo "Tags: ${TAGS}"
+
+build:amd64:
+  extends: .docker-base
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - "**/*"
+        - "!**/*.md"
+        - "!website/**"
+        - "!docs/**"
+        - "!LICENSE"
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "dev"'
+      changes:
+        - "**/*"
+        - "!**/*.md"
+        - "!website/**"
+        - "!docs/**"
+        - "!LICENSE"
+  script:
+    - *tag-args
+    - docker buildx create --use --name ci --driver docker-container --driver-opt network=host
     - |
       docker buildx build \
-        --platform "${PLATFORMS}" \
+        --platform linux/amd64 \
         -f deploy/Dockerfile \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
         --build-arg QWENPAW_DISABLED_CHANNELS="${QWENPAW_DISABLED_CHANNELS}" \
+        --cache-from "type=registry,ref=${CACHE_IMAGE}:amd64" \
+        --cache-to   "type=registry,ref=${CACHE_IMAGE}:amd64,mode=max,compression=zstd" \
         ${TAGS} \
+        --provenance=false \
+        --push \
+        .
+
+release:multiarch:
+  extends: .docker-base
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+      when: manual
+      allow_failure: true
+  script:
+    - *tag-args
+    - docker run --privileged --rm tonistiigi/binfmt --install arm64
+    - docker buildx create --use --name ci-multi --driver docker-container --driver-opt network=host
+    - |
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        -f deploy/Dockerfile \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg QWENPAW_DISABLED_CHANNELS="${QWENPAW_DISABLED_CHANNELS}" \
+        --cache-from "type=registry,ref=${CACHE_IMAGE}:amd64" \
+        --cache-from "type=registry,ref=${CACHE_IMAGE}:multiarch" \
+        --cache-to   "type=registry,ref=${CACHE_IMAGE}:multiarch,mode=max,compression=zstd" \
+        ${TAGS} \
+        --provenance=false \
         --push \
         .

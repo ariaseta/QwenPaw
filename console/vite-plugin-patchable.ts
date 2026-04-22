@@ -230,7 +230,14 @@ function generateRegistryFile(
     if (!rel.startsWith(".")) rel = `./${rel}`;
     const relNoExt = rel.replace(/\.[tj]sx?$/, "");
     imports.push(`import * as ${alias} from "${relNoExt}";`);
-    registers.push(`  moduleRegistry.register("${info.moduleKey}", ${alias});`);
+    registers.push(
+      [
+        `  moduleRegistry.register(`,
+        `    "${info.moduleKey}",`,
+        `    ${alias},`,
+        `  );`,
+      ].join("\n"),
+    );
   }
 
   return [
