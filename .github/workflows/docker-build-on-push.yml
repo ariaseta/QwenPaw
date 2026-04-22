@@ -23,11 +23,14 @@ on:
     branches:
       - main
       - master
+      - dev
+      - feat-*
     paths-ignore:
       - "**.md"
       - "website/**"
       - "docs/**"
       - ".github/workflows/docker-build-on-push.yml"
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: qwenpaw
@@ -75,8 +78,25 @@ jobs:
         id: sha
         run: echo "short=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-      # ── Build & push (multi-arch) with dev tags ──────────────────────────────
-      - name: Build and push
+      # ── Build & push (multi-arch) to GHCR (always) ───────────────────────────
+      - name: Build and push (GHCR)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            QWENPAW_DISABLED_CHANNELS=imessage
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev-${{ steps.sha.outputs.short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Build & push (multi-arch) to Docker Hub (optional) ───────────────────
+      - name: Build and push (Docker Hub)
+        if: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -88,7 +108,5 @@ jobs:
           tags: |
             docker.io/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:dev
             docker.io/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:dev-${{ steps.sha.outputs.short }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:dev-${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

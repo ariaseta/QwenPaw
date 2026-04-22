@@ -92,7 +92,8 @@ build:amd64:
         - "!LICENSE"
   script:
     - *tag-args
-    - docker buildx create --use --name ci --driver docker-container --driver-opt network=host
+    - docker context create tls-env
+    - docker buildx create --use --name ci --driver docker-container --driver-opt network=host tls-env
     - |
       docker buildx build \
         --platform linux/amd64 \
@@ -117,7 +118,8 @@ release:multiarch:
   script:
     - *tag-args
     - docker run --privileged --rm tonistiigi/binfmt --install arm64
-    - docker buildx create --use --name ci-multi --driver docker-container --driver-opt network=host
+    - docker context create tls-env
+    - docker buildx create --use --name ci-multi --driver docker-container --driver-opt network=host tls-env
     - |
       docker buildx build \
         --platform linux/amd64,linux/arm64 \
