@@ -28,6 +28,7 @@ from .backup import router as backup_router
 
 router = APIRouter()
 
+router.include_router(agent_router)
 router.include_router(agents_router)
 router.include_router(agent_router)
 router.include_router(config_router)
