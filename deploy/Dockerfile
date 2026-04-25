@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-# -----------------------------------------------------------------------------
 # Optimized for BuildKit:
 #   • Cache mounts for apt / npm / pip → near-instant rebuilds
 #   • Layered COPY (lockfile → install → source) → maximum cache hits
@@ -22,8 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git
 
 # 1. Install deps first — cached unless package*.json changes.
 COPY console/package.json console/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npm ci --include=dev --prefer-offline --no-audit --no-fund
+RUN npm ci --include=dev --prefer-offline --no-audit --no-fund
 
 # 2. Copy source and build.
 COPY console/ ./
@@ -55,9 +52,7 @@ ENV QWENPAW_DISABLED_CHANNELS=${QWENPAW_DISABLED_CHANNELS} \
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
  && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
       python3 \
       python3-pip \
@@ -112,8 +107,7 @@ COPY pyproject.toml setup.py README.md ./
 COPY src ./src
 COPY --from=console-builder /app/console/dist/ ./src/qwenpaw/console/
 
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install .
+RUN pip install .
 
 # Init working dir with default config.json and HEARTBEAT.md (build time).
 RUN qwenpaw init --defaults --accept-security
